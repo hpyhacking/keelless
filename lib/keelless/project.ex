@@ -3,30 +3,29 @@ defmodule Keelless.Project do
   use GenServer
 
   @base_path "https://api.keen.io/3.0"
+  @request_opts [{:timeout, 10000}, {:recv_timeout, 10000}]
 
   #############################################################################
   ### GenServer Callback
   #############################################################################
 
-  def start_link(project_id, write_key) do
-    opts  = [name: project_id_to_process_id(project_id)]
-
+  def start_link(name, project_id, write_key) do
     config = %{project_id: project_id, write_key: write_key, error: nil}
     config = config |> Dict.merge(record_builder(config))
 
-    GenServer.start_link(__MODULE__, config, opts)
+    GenServer.start_link(__MODULE__, config, [name: name])
   end
 
   def init(config) do
     {:ok, config}
   end
 
-  def handle_call({:sync, collection, data} _, config) do
-    result = 
+  def handle_cast({:publish, collection, data}, config) do
+    {:ok, _} = 
       config.record_single.(collection, data)
       |> gogogo!
 
-    {:reply, result, config}
+    {:noreply, config}
   end
 
   #############################################################################
@@ -46,10 +45,10 @@ defmodule Keelless.Project do
       uri = @base_path <> "/projects/#{project_id}/events/#{collection_name}"
       headers = [{"Authorization", write_key}, {"Content-Type", "application/json"}]
 
-      req = %{uri: uri, verb: :post, timeout: 10000, sync: true, headers: headers}
+      req = %{uri: uri, verb: :post, sync: true, headers: headers}
 
-      case Poison.encode(payload) do
-        {:ok, data} -> Dict.put(req, :payload, data)
+      case Poison.encode(data) do
+        {:ok, encoded_data} -> Dict.put(req, :payload, encoded_data)
         _ -> {:error, {:invalid_data, data}}
       end
     end
@@ -63,24 +62,17 @@ defmodule Keelless.Project do
   end
 
   defp gogogo!(error = {:error, _}), do: error
-  defp gogogo!(req = %{uri: uri, verb: :post, payload: payload, headers: headers}) do
-    post(uri, payload, headers, [{:timeout, timeout}, {:recv_timeout, timeout}])
-    |> process_response(req)
+  defp gogogo!(%{uri: uri, verb: :post, payload: payload, headers: headers}) do
+    post(uri, payload, headers, @request_opts)
+    |> process_response
   end
 
-  defp process_response(response, request) do
+  defp process_response(response) do
     case response do
       {:ok, %{status_code: 200, body: body}} -> {:ok, body}
       {:ok, %{status_code: 201, body: body}} -> {:ok, body}
-      {:ok, %{status_code: code, body: body}} ->
-        {:error, %{status_code: code}}
-      {:error, reason} ->
-        {:error, %{error: :client_error, reason: reason}}
+      {:error, reason} -> {:error, %{error: :client_error, reason: reason}}
     end
-  end
-
-  defp project_id_to_process_id(project_id) do
-    String.to_atom "#{project_id}.keenio.com"
   end
 end
 

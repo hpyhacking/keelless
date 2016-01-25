@@ -1,0 +1,4 @@
+use Mix.Config
+
+config :keelless, write_key: "WRITE_KEY"
+config :keelless, project_id: "PROJECT_ID"
